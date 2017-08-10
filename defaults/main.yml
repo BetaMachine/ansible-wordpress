@@ -1,0 +1,335 @@
+---
+
+# .. vim: foldmarker=[[[,]]]:foldmethod=marker
+
+# debops.wordpress default variables [[[
+# ==================================
+
+# .. contents:: Sections
+#    :local:
+#
+# .. include:: includes/all.rst
+
+
+# Basic configuration options [[[
+# -------------------------------
+
+# .. envvar:: wordpress__site_domain [[[
+#
+# Default domain that will be used to host the forum instance.
+wordpress__site_domain: 'www.{{ ansible_domain }}'
+
+# ]]]
+
+# .. envvar:: wordpress__site_domains [[[
+#
+# Defines all the domain that will respond to this instance.
+wordpress__site_domains: [ '{{ wordpress__site_domain }}' ]
+
+# ]]]
+
+# .. envvar:: wordpress__site_title [[[
+#
+# Default wordpress site title
+wordpress__site_title: 'Wordpress website'
+
+# ]]]
+
+# .. envvar:: wordpress__lang [[[
+#
+# Default lang that will be used to host the forum instance.
+wordpress__lang: 'en_US'
+
+# ]]]
+
+# .. envvar:: wordpress__base_plugins [[[
+#
+# Base set of Wordpress plugins
+wordpress__base_plugins: []
+
+# ]]]
+
+# .. envvar:: wordpress__plugins [[[
+#
+# Defines an additional set of wordpress plugins
+wordpress__plugins: []
+
+# ]]]
+
+# .. envvar:: wordpress__pki_realm [[[
+#
+# Defines the PKI realm for this instance.
+wordpress__pki_realm: '{{ wordpress__site_domains[0] }}'
+
+# ]]]
+
+# ]]]
+
+# User, group and app directories [[[
+# -----------------------------------
+
+# .. envvar:: wordpress__user [[[
+#
+# wordpress system user account.
+wordpress__user: 'wordpress'
+
+# ]]]
+
+# .. envvar:: wordpress__group [[[
+#
+# wordpress system user group.
+wordpress__group: '{{ ansible_local.nginx.group
+                      if (ansible_local|d() and ansible_local.nginx|d() and
+                          ansible_local.nginx.group|d())
+                      else "www-data" }}'
+
+# ]]]
+
+# .. envvar:: wordpress__www_directory [[[
+#
+# Base root web directory for wordpress website.
+wordpress__www_directory: '{{ (ansible_local.nginx.www
+                           if (ansible_local|d() and ansible_local.nginx|d() and
+                               ansible_local.nginx.www|d())
+                           else "/srv/www") + "/sites/" + wordpress__site_domain }}'
+
+# ]]]
+
+# .. envvar:: wordpress__home_directory [[[
+#
+# Default home directory for wordpress sources.
+wordpress__home_directory: '{{ wordpress__www_directory }}'
+
+# ]]]
+
+# .. envvar:: wordpress__source_version [[[
+#
+# wordpress source version.
+wordpress__source_version: '3.2.0'
+
+# ]]]
+
+# .. envvar:: wordpress__source_url [[[
+#
+# wordpress source url.
+wordpress__source_url: 'https://www.wordpress.com/files/release/wordpress-{{ wordpress__source_version }}.zip'
+
+# ]]]
+
+# .. envvar:: wordpress__max_file_size [[[
+#
+# The maximum size of any acceptable file or upload in MB.
+wordpress__max_file_size: '30'
+
+# ]]]
+
+# .. envvar:: wordpress__admin_user [[[
+#
+# Defines the administrator user name.
+wordpress__admin_user: '{{ wordpress__user }}'
+
+# ]]]
+
+# .. envvar:: wordpress__admin_email [[[
+#
+# Defines the administrator email.
+wordpress__admin_email: '{{ wordpress__user }}@{{ wordpress__site_domain }}'
+
+# ]]]
+
+# .. envvar:: wordpress__admin_password [[[
+#
+# Wordpress admin interface user password.
+wordpress__admin_password: '{{ lookup("password", secret + "/wordpress/" +
+                                 ansible_fqdn + "/credentials/" +
+                                 wordpress__admin_user + "/password length=" +
+                                 wordpress__admin_password_length) }}'
+
+# ]]]
+
+# .. envvar:: wordpress__admin_password_length [[[
+#
+# Defines the administrator default password length.
+wordpress__admin_password_length: '20'
+
+# ]]]
+
+# ]]]
+
+# Dependent packages [[[
+# ----------------------
+
+# .. envvar:: wordpress__base_packages [[[
+#
+# wordpress base packages to install prior to installation.
+wordpress__base_packages: [ 'unzip', 'imagemagick' ]
+
+# ]]]
+
+# .. envvar:: wordpress__packages [[[
+#
+# wordpress additional packages to install prior to installation.
+wordpress__packages: []
+
+# ]]]
+
+# ]]]
+
+# PHP configuration [[[
+# ---------------------
+
+# .. envvar:: wordpress__php__dependent_packages [[[
+#
+# List of PHP packages to install using debops.php_ role.
+wordpress__php__dependent_packages:
+
+  - [ 'mcrypt', 'ldap', 'json', 'gd', 'imagick', 'mysql' ]
+
+# ]]]
+
+# .. envvar:: wordpress__php__dependent_pools [[[
+#
+# Configuration of the wordpress PHP-FPM pool managed by the debops.php_ role.
+wordpress__php__dependent_pools:
+
+  - name: 'wordpress'
+    user: '{{ wordpress__user }}'
+    group: '{{ wordpress__group }}'
+
+    php_admin_values:
+      post_max_size:       '{{ wordpress__max_file_size }}M'
+      upload_max_filesize: '{{ wordpress__max_file_size }}M'
+
+# ]]]
+
+# ]]]
+
+# NGinx configuration [[[
+# -----------------------
+
+# .. envvar:: wordpress__nginx__vhost_filename [[[
+#
+# Default nginx filename
+wordpress__nginx__vhost_filename: 'debops.wordpress'
+
+# ]]]
+
+# .. envvar:: wordpress__nginx__dependent_upstreams [[[
+#
+# Configuration of nginx upstream for wordpress.
+wordpress__nginx__dependent_upstreams:
+
+  - name: 'php_wordpress'
+    type: 'php'
+    php_pool: 'wordpress'
+
+# ]]]
+
+# .. envvar:: wordpress__nginx__dependent_servers [[[
+#
+# Configuration of nginx server for wordpress.
+wordpress__nginx__dependent_servers:
+
+  - name: '{{ wordpress__site_domains | join(" ") }}'
+    filename: '{{ wordpress__nginx__vhost_filename }}'
+    by_role: 'debops.wordpress'
+    type: 'php'
+    root: '{{ wordpress__www_directory }}'
+    index: 'index.php'
+
+    pki_realm: '{{ wordpress__pki_realm }}'
+
+    options: |
+      autoindex off;
+      client_max_body_size {{ wordpress__max_file_size }}M;
+      client_body_buffer_size 128k;
+
+    location:
+
+      '/': |
+          try_files $uri $uri/ /index.php?$args;
+
+      '~ \.php$': |
+          include fastcgi_params;
+          fastcgi_split_path_info ^(.+\.php)(/.+)$;
+          fastcgi_pass php_wordpress;
+          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+          fastcgi_param PATH_INFO $fastcgi_path_info;
+
+      '~* \.(js|css|png|jpg|jpeg|gif|ico)$': |
+          expires max;
+          log_not_found off;
+
+      '~ /\.svn|/\.git': |
+          deny all;
+          internal;
+
+# ]]]
+
+# ]]]
+
+# MariaDB configuration [[[
+# ----------------------------
+
+# .. envvar:: wordpress__mariadb__db_name [[[
+#
+# Sets the mariadb database name
+wordpress__mariadb__db_name: 'wordpress_production'
+
+# ]]]
+
+# .. envvar:: wordpress__mariadb__db_user [[[
+#
+# Sets the mariadb db user
+wordpress__mariadb__db_user: '{{ wordpress__user }}'
+
+# ]]]
+
+# .. envvar:: wordpress__mariadb__db_password [[[
+#
+# Sets the mariadb db password
+wordpress__mariadb__db_password: '{{ lookup("password", secret + "/mariadb/" +
+                                    (ansible_local.mariadb.delegate_to
+                                     if (ansible_local|d() and ansible_local.mariadb|d() and
+                                         ansible_local.mariadb.delegate_to|d())
+                                     else "localhost") + "/credentials/" +
+                                    wordpress__mariadb__db_user + "/password" +
+                                    " chars=ascii_letters,hexdigits,^!#?*@ length=" +
+                                     wordpress__mariadb__db_password_length) }}'
+
+# ]]]
+
+# .. envvar:: wordpress__mariadb__db_password_length [[[
+#
+# Sets the mariadb table prefix
+wordpress__mariadb__db_password_length: '40'
+
+# ]]]
+
+# .. envvar:: wordpress__mariadb__db_prefix [[[
+#
+# Sets the mariadb table prefix
+wordpress__mariadb__db_prefix: 'wp_'
+
+# ]]]
+
+# .. envvar:: wordpress__mariadb__dependent_users [[[
+#
+# Sets the mariadb dependent roles
+wordpress__mariadb__dependent_users:
+  - name: '{{ wordpress__mariadb__db_user }}'
+    database: '{{ wordpress__mariadb__db_name }}'
+    password: '{{ wordpress__mariadb__db_password }}'
+    priv_aux: False
+
+# ]]]
+
+# .. envvar:: wordpress__mariadb__dependent_databases [[[
+#
+# Sets the mariadb db user
+wordpress__mariadb__dependent_databases:
+  - name: '{{ wordpress__mariadb__db_name }}'
+
+# ]]]
+
+# ]]]

@@ -1,0 +1,117 @@
+---
+
+- name: Install requested packages
+  apt:
+    name: '{{ item }}'
+    state: present
+    install_recommends: False
+  with_flattened:
+    - '{{ wordpress__base_packages }}'
+    - '{{ wordpress__packages }}'
+
+- name: Create wordpress group
+  group:
+    name: '{{ wordpress__group }}'
+    system: True
+    state: present
+
+- name: Create wordpress user
+  user:
+    name: '{{ wordpress__user }}'
+    group: '{{ wordpress__group }}'
+    home: '{{ wordpress__home_directory }}'
+    shell: '/bin/false'
+    comment: 'wordpress'
+    createhome: False
+    system: True
+    state: present
+
+- name: Create home directory if different from www.
+  file:
+    path: '{{ wordpress__home_directory }}'
+    state: 'directory'
+    owner: '{{ wordpress__user }}'
+    group: '{{ wordpress__group }}'
+    mode: 0750
+  when: wordpress__home_directory != wordpress__www_directory
+
+- name: Install Wordpress command line interface
+  get_url:
+    url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+    dest: /usr/local/bin/wp
+    mode: 0755
+
+- name: Create www directory
+  file:
+    path: '{{ wordpress__www_directory }}'
+    state: 'directory'
+    owner: '{{ wordpress__user }}'
+    group: '{{ wordpress__group }}'
+    mode: 0750
+
+- block:
+    - name: Check if sources are already downloaded.
+      stat:
+        path: '{{ wordpress__www_directory }}/wp-config.php'
+      register: wordpress__downloaded
+
+    - name: Downloading Wordpress
+      shell:
+        cmd: |
+          wp core download --path={{ wordpress__www_directory }} \
+              --locale={{ wordpress__lang }} --force
+      when: not wordpress__downloaded.stat.exists
+
+    - name: Configure Wordpress
+      template:
+        src: templates/wp-config.php.j2
+        dest: '{{ wordpress__www_directory }}/wp-config.php'
+        owner: '{{ wordpress__user }}'
+        group: '{{ wordpress__group }}'
+        mode: 0660
+
+    - name: Check if site is already installed
+      shell:
+        cmd: 'wp core is-installed'
+        chdir: '{{ wordpress__www_directory }}'
+      register: wordpress__site_installed
+      failed_when: wordpress__site_installed.rc != 0 and
+                   wordpress__site_installed.rc != 1
+
+    - name: Install Wordpress website.
+      shell:
+        cmd: |
+          wp core install \
+              --url={{ wordpress__site_domain }} \
+              --title='{{ wordpress__site_title }}' \
+              --admin_user={{ wordpress__admin_user }} \
+              --admin_password='{{ wordpress__admin_password }}' \
+              --admin_email={{ wordpress__admin_email }}
+        chdir: '{{ wordpress__www_directory }}'
+      when: wordpress__site_installed.rc != 0
+
+    - name: Install Wordpress plugins.
+      shell:
+        cmd: 'wp plugin install {{ item }}'
+        chdir: '{{ wordpress__www_directory }}'
+      with_flattened:
+        - '{{ wordpress__base_plugins }}'
+        - '{{ wordpress__plugins }}'
+
+    - name: Update site
+      shell:
+        cmd: 'wp core update'
+        chdir: '{{ wordpress__www_directory }}'
+
+    - name: Update plugins
+      shell:
+        cmd: 'wp plugin update --all'
+        chdir: '{{ wordpress__www_directory }}'
+
+    - name: Update database
+      shell:
+        cmd: 'wp core update-db'
+        chdir: '{{ wordpress__www_directory }}'
+
+  become: yes
+  become_user: '{{ wordpress__user }}'
